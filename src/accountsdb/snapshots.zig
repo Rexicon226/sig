@@ -14,7 +14,7 @@ const Slot = sig.core.time.Slot;
 
 const FileId = sig.accounts_db.accounts_file.FileId;
 
-const EpochSchedule = sig.accounts_db.genesis_config.EpochSchedule;
+const EpochSchedule = sig.core.EpochSchedule;
 const FeeRateGovernor = sig.accounts_db.genesis_config.FeeRateGovernor;
 const Inflation = sig.accounts_db.genesis_config.Inflation;
 const Rent = sig.accounts_db.genesis_config.Rent;
