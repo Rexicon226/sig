@@ -64,7 +64,6 @@ pub const EpochSchedule = extern struct {
         }
     }
 
-    /// get the length of the given epoch (in slots)
     pub fn getSlotsInEpoch(self: *const EpochSchedule, epoch: Epoch) Slot {
         comptime std.debug.assert(std.math.isPowerOfTwo(MINIMUM_SLOTS_PER_EPOCH));
         return if (epoch < self.first_normal_epoch)
@@ -73,7 +72,7 @@ pub const EpochSchedule = extern struct {
             self.slots_per_epoch;
     }
 
-    pub fn default() EpochSchedule {
+    pub fn default() !EpochSchedule {
         return EpochSchedule.custom(
             DEFAULT_SLOTS_PER_EPOCH,
             DEFAULT_LEADER_SCHEDULE_SLOT_OFFSET,
@@ -81,7 +80,7 @@ pub const EpochSchedule = extern struct {
         );
     }
 
-    pub fn custom(slots_per_epoch: u64, leader_schedule_slot_offset: u64, warmup: bool) EpochSchedule {
+    pub fn custom(slots_per_epoch: u64, leader_schedule_slot_offset: u64, warmup: bool) !EpochSchedule {
         std.debug.assert(slots_per_epoch > MINIMUM_SLOTS_PER_EPOCH);
         var first_normal_epoch: Epoch = 0;
         var first_normal_slot: Slot = 0;

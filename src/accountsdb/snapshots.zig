@@ -889,6 +889,11 @@ pub const BankFields = struct {
             .is_delta = rand.boolean(),
         };
     }
+
+    pub fn getStakedNodes(self: *const BankFields, allocator: std.mem.Allocator, epoch: Epoch) !*const std.AutoArrayHashMapUnmanaged(Pubkey, u64) {
+        const epoch_stakes = self.epoch_stakes.getPtr(epoch) orelse return error.NoEpochStakes;
+        return epoch_stakes.stakes.vote_accounts.stakedNodes(allocator);
+    }
 };
 
 /// Analogous to [SerializableAccountStorageEntry](https://github.com/anza-xyz/agave/blob/cadba689cb44db93e9c625770cafd2fc0ae89e33/runtime/src/serde_snapshot/storage.rs#L11)
