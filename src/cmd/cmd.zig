@@ -638,15 +638,10 @@ fn validator() !void {
         geyser_writer,
     );
 
-    // leader schedule cache
     var leader_schedule_cache = LeaderScheduleCache.init(allocator, snapshot.bank.bank_fields.epoch_schedule);
     if (try getLeaderScheduleFromCli(allocator) orelse null) |leader_schedule| {
-        try leader_schedule_cache.insertLeaderSchedule(snapshot.bank.bank_fields.epoch, leader_schedule);
-    } else {
-        _ = try leader_schedule_cache.getSlotLeaderMaybeCompute(snapshot.bank.bank_fields.slot, snapshot.bank.bank_fields);
+        try leader_schedule_cache.insertLeaderSchedule(snapshot.bank.bank_fields.epoch, leader_schedule); // This assumes that the banks epoch is the same as the epoch of the cli leader schedule
     }
-    // This provider will fail at epoch boundary unless another thread updated the leader schedule cache
-    // i.e. called leader_schedule_cache.getSlotLeaderMaybeCompute(slot, bank_fields);
     const leader_provider = leader_schedule_cache.getSlotLeaderProvider();
 
     // blockstore
@@ -705,6 +700,26 @@ fn validator() !void {
     });
     defer cleanup_service_handle.join();
 
+    // Shred retransmit channel
+    const retransmit_shred_channel = sig.sync.Channel(std.ArrayList(sig.net.Packet)).init(allocator, 100);
+    defer retransmit_shred_channel.deinit();
+    var retransmit_send_socket = try network.Socket.create(.ipv4, .udp);
+    defer retransmit_send_socket.close();
+    try retransmit_send_socket.bind(try network.EndPoint.parse("0.0.0.0:0"));
+    const retransmit_service_handle = try std.Thread.spawn(.{}, sig.turbine.runRetransmitService, .{
+        allocator,
+        sig.gossip.data.ThreadSafeContactInfo.fromContactInfo(gossip_service.my_contact_info),
+        snapshot.bank.bank_fields.epoch_schedule,
+        snapshot.bank.bank_fields,
+        &leader_schedule_cache,
+        retransmit_shred_channel,
+        &.{
+            retransmit_send_socket,
+        },
+        &gossip_service.gossip_table_rw,
+        &app_base.exit,
+    });
+
     // shred collector
     var shred_col_conf = config.current.shred_collector;
     shred_col_conf.start_slot = shred_col_conf.start_slot orelse snapshot.bank.bank_fields.slot;
@@ -721,10 +736,12 @@ fn validator() !void {
             .my_shred_version = &gossip_service.my_shred_version,
             .leader_schedule = leader_provider,
             .shred_inserter = shred_inserter,
+            .retransmit_shred_sender = retransmit_shred_channel,
         },
     );
     defer shred_collector_manager.deinit();
 
+    retransmit_service_handle.join();
     gossip_manager.join();
     shred_collector_manager.join();
 }
@@ -752,7 +769,6 @@ fn shredCollector() !void {
     const leader_schedule = try getLeaderScheduleFromCli(allocator) orelse @panic("No leader schedule found");
     const leader_schedule_epoch = leader_schedule_cache.epoch_schedule.getEpoch(leader_schedule.first_slot.?); // first_slot is non null iff leader schedule is built from cli
     try leader_schedule_cache.insertLeaderSchedule(leader_schedule_epoch, leader_schedule);
-
     const leader_provider = leader_schedule_cache.getSlotLeaderProvider();
 
     // blockstore
@@ -811,6 +827,9 @@ fn shredCollector() !void {
     });
     defer cleanup_service_handle.join();
 
+    const retransmit_shred_channel = sig.sync.Channel(std.ArrayList(sig.net.Packet)).init(allocator, 100);
+    defer retransmit_shred_channel.deinit();
+
     // shred collector
     var shred_col_conf = config.current.shred_collector;
     shred_col_conf.start_slot = shred_col_conf.start_slot orelse @panic("No start slot found");
@@ -827,6 +846,7 @@ fn shredCollector() !void {
             .my_shred_version = &gossip_service.my_shred_version,
             .leader_schedule = leader_provider,
             .shred_inserter = shred_inserter,
+            .retransmit_shred_sender = retransmit_shred_channel,
         },
     );
     defer shred_collector_manager.deinit();

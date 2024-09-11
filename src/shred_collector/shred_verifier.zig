@@ -18,6 +18,8 @@ pub fn runShredVerifier(
     unverified_shred_receiver: *Channel(ArrayList(Packet)),
     /// me --> shred processor
     verified_shred_sender: *Channel(ArrayList(Packet)),
+    /// me --> turbine retransmitter
+    retransmit_shred_sender: *Channel(ArrayList(Packet)),
     leader_schedule: SlotLeaderProvider,
 ) !void {
     var verified_count: usize = 0;
@@ -38,6 +40,7 @@ pub fn runShredVerifier(
                 }
             }
             try verified_shred_sender.send(packet_batch);
+            try retransmit_shred_sender.send(packet_batch);
             if (exit.load(.monotonic)) return;
         }
     }
