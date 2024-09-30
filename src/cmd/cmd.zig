@@ -639,9 +639,8 @@ fn validator() !void {
     );
 
     var leader_schedule_cache = LeaderScheduleCache.init(allocator, snapshot.bank.bank_fields.epoch_schedule);
-    if (try getLeaderScheduleFromCli(allocator) orelse null) |leader_schedule| {
-        try leader_schedule_cache.insertLeaderSchedule(snapshot.bank.bank_fields.epoch, leader_schedule); // This assumes that the banks epoch is the same as the epoch of the cli leader schedule
-    }
+    // Fill the cache with the leader schedule for the current epoch
+    _ = try leader_schedule_cache.getSlotLeaderMaybeCompute(snapshot.bank.bank_fields.slot, snapshot.bank.bank_fields);
     const leader_provider = leader_schedule_cache.getSlotLeaderProvider();
 
     // blockstore
@@ -701,14 +700,29 @@ fn validator() !void {
     defer cleanup_service_handle.join();
 
     // Shred retransmit channel
+    // Channel populated by the shred collector after the signature verification phase
+    // Channel read by the retransmit service to retransmit shreds to peers
     const retransmit_shred_channel = sig.sync.Channel(std.ArrayList(sig.net.Packet)).init(allocator, 100);
     defer retransmit_shred_channel.deinit();
+
+    // Sockets used to retransmit shreds to peers
+    // This should be configured at a higher level and may consist of multiple sockets
     var retransmit_send_socket = try network.Socket.create(.ipv4, .udp);
     defer retransmit_send_socket.close();
     try retransmit_send_socket.bind(try network.EndPoint.parse("0.0.0.0:0"));
+
+    // Retransmit service needs to know the nodes contact info
+    // This should be replaced my a contact info provider which should be used by all services other than
+    // the gossip service to get the nodes contact info since gossip can change the contact info
+    const thread_safe_contact_info = sig.gossip.data.ThreadSafeContactInfo.fromContactInfo(gossip_service.my_contact_info);
+
+    // Random number generator
+    var rng = std.rand.DefaultPrng.init(@bitCast(std.time.timestamp()));
+
+    // Retransmit service
     const retransmit_service_handle = try std.Thread.spawn(.{}, sig.turbine.runRetransmitService, .{
         allocator,
-        sig.gossip.data.ThreadSafeContactInfo.fromContactInfo(gossip_service.my_contact_info),
+        thread_safe_contact_info,
         snapshot.bank.bank_fields.epoch_schedule,
         snapshot.bank.bank_fields,
         &leader_schedule_cache,
@@ -717,13 +731,13 @@ fn validator() !void {
             retransmit_send_socket,
         },
         &gossip_service.gossip_table_rw,
+        rng.random(),
         &app_base.exit,
     });
 
     // shred collector
     var shred_col_conf = config.current.shred_collector;
     shred_col_conf.start_slot = shred_col_conf.start_slot orelse snapshot.bank.bank_fields.slot;
-    var rng = std.rand.DefaultPrng.init(@bitCast(std.time.timestamp()));
     var shred_collector_manager = try sig.shred_collector.start(
         shred_col_conf,
         ShredCollectorDependencies{
